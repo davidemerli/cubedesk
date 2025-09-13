@@ -1,0 +1,53 @@
+FROM --platform=$BUILDPLATFORM node:20-slim AS builder
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y openssl python3 make g++ && \
+    apt-get clean
+
+# Copy package files
+COPY package.json yarn.lock ./
+
+# Install dependencies
+RUN yarn install --frozen-lockfile
+
+# Copy source code
+COPY . .
+
+# Set minimal environment for build
+ENV NODE_ENV=development
+ENV DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy"
+
+# Generate Prisma client (without DB connection)
+RUN npx prisma generate
+
+# Generate GraphQL types
+RUN npx graphql-codegen
+
+# Set production environment
+ENV NODE_ENV=production
+
+# Build the application
+RUN yarn build
+
+FROM --platform=$TARGETPLATFORM node:20-slim
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apt-get update && \
+    apt-get install -y openssl && \
+    apt-get clean
+
+# Copy built application
+COPY --from=builder /app/build ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+
+# Expose port
+EXPOSE 3000
+
+# Start the application
+CMD ["node", "server/app.js"]
